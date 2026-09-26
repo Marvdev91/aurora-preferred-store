@@ -1,0 +1,3 @@
+# The pipeline itself has NO third-party dependencies — Python 3.10+ stdlib only.
+# This file exists only for the optional test runner.
+pytest>=8.0 ; python_version >= "3.10"

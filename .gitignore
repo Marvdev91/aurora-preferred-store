@@ -1,0 +1,12 @@
+# Never commit secrets
+.env
+*.key
+
+# Generated data and dry-run payloads
+data/*.json
+data/*.jsonl
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
