@@ -88,7 +88,19 @@ def cmd_load(args):
         _banner("PROFILES DROPPED (no identifier survived repair)")
         for entry in profile_result["dropped_profiles"]:
             print(f"  #{entry['profile_index']:<4} {entry.get('email') or '(no email)':<45} {entry['reason']}")
-    event_result = loader.load_events(client, events, limit=args.max_events)
+
+    # Events load second, deliberately: it can now skip — without an API call
+    # — any event whose only identifier is one load_profiles already learned
+    # is permanently invalid. Known failures are quarantined upstream;
+    # unexpected ones still go to the live API and get handled exactly as
+    # before.
+    quarantine_values = set(profile_result.get("quarantined_identifiers", []))
+    event_result = loader.load_events(client, events, limit=args.max_events,
+                                      quarantine_values=quarantine_values)
+    if event_result.get("quarantined"):
+        _banner(f"EVENTS QUARANTINED ({event_result['events_quarantined']} — known-bad identity, no API call made)")
+        for entry in event_result["quarantined"][:10]:
+            print(f"  {entry['unique_id']:<24} {entry['reason']}")
     client.close()
 
     _banner("LOAD RESULT")

@@ -15,6 +15,23 @@ be emailed, and in EMEA that distinction is the difference between a migration
 and a GDPR incident. Consent state migrates once, from the current systems of
 record (Sailthru, Adobe Campaign, Attentive), with its original timestamp and
 source — a separate, audited workstream.
+
+On the eligibility boundary between profiles and events:
+loading profiles first, then events, means we learn something from the API
+before we ever try to load a single event — specifically, which identifier
+values Klaviyo's live validation rejected outright. A handful of this POC's
+synthetic phone numbers fail Klaviyo's carrier-eligibility check; for an
+identity with no other identifier, that's not a transient failure to retry,
+it's a permanent one. Re-attempting the same known-bad value once per event
+(this POC has several in-store visits for some of those same customers)
+would just be repeating a question we already have the answer to. So
+`load_profiles` reports exactly which identifier values caused a profile to
+be dropped, and `load_events` uses that to quarantine — skip without an API
+call — any event whose only identifier is one of them, while still relying
+on the live API, not a guess, for everything else. This is a controlled
+data-quality boundary for a *known* failure mode; it does not replace the
+per-record API resilience below, which still handles *unexpected* failures
+exactly as before.
 """
 
 import json
@@ -87,9 +104,11 @@ def _repair_batch(working: list[tuple[int, dict]], error_body: str,
             continue
         original_index, profile = working[index]
         for field, detail in fields.items():
-            if profile.pop(field, None) is not None:
+            value = profile.pop(field, None)
+            if value is not None:
                 stripped_log.append({"profile_index": original_index,
-                                     "field": field, "reason": detail})
+                                     "field": field, "value": value,
+                                     "reason": detail})
                 changed = True
         if not (IDENTIFIER_FIELDS & profile.keys()):
             drop_targets.add(index)
@@ -163,11 +182,21 @@ def load_profiles(client: KlaviyoClient, profiles: list[dict],
         for job_id in job_ids:
             statuses[job_id] = _await_job(client, job_id)
 
+    # Cross-reference: a stripped value only becomes "known-bad" if stripping
+    # it is what caused that same profile to be dropped — most stripped phone
+    # numbers don't cause a drop, because the profile also has an email.
+    dropped_indices = {d["profile_index"] for d in dropped_profiles}
+    quarantined_identifiers = sorted({
+        s["value"] for s in stripped_fields
+        if s["profile_index"] in dropped_indices and s.get("value")
+    })
+
     return {"profiles_submitted": len(profiles),
             "profiles_dropped": len(dropped_profiles),
             "jobs": job_ids, "job_statuses": statuses,
             "failed_chunks": failures, "stripped_fields": stripped_fields,
-            "dropped_profiles": dropped_profiles}
+            "dropped_profiles": dropped_profiles,
+            "quarantined_identifiers": quarantined_identifiers}
 
 
 def _await_job(client: KlaviyoClient, job_id: str, timeout: int = 180) -> str:
@@ -184,7 +213,8 @@ def _await_job(client: KlaviyoClient, job_id: str, timeout: int = 180) -> str:
     return "timeout"
 
 
-def load_events(client: KlaviyoClient, events: list[dict], limit: int | None = None) -> dict:
+def load_events(client: KlaviyoClient, events: list[dict], limit: int | None = None,
+                quarantine_values: set | None = None) -> dict:
     """
     One call per event.
 
@@ -194,9 +224,28 @@ def load_events(client: KlaviyoClient, events: list[dict], limit: int | None = N
     the volume in this POC does not justify the extra moving part. That trade-off
     is one I'd expect the Sr. Engineer on the panel to push on, and the answer is
     "batch it for production, and here is the one function that changes".
+
+    `quarantine_values` (optional) is the set of identifier values that
+    `load_profiles` already learned are permanently invalid, cross-referenced
+    from the profiles it had to drop. An event is quarantined — skipped with
+    no API call — only if every identifier its embedded profile carries is in
+    that set, i.e. its identity is one we already know Klaviyo will reject.
+    Anything not covered by that known case still goes to the live API and
+    relies on the same per-record resilience as before; this never guesses.
     """
-    sent, failed = 0, []
+    quarantine_values = quarantine_values or set()
+    sent, failed, quarantined = 0, [], []
+
     for event in events[:limit] if limit else events:
+        profile = event.get("profile") or {}
+        remaining = {k: v for k, v in profile.items() if v not in quarantine_values}
+        if profile and not remaining:
+            quarantined.append({
+                "unique_id": event["unique_id"],
+                "reason": "every identifier on this event's profile was already "
+                         "learned to be invalid while loading profiles",
+            })
+            continue
         try:
             client.create_event(event)
             sent += 1
@@ -207,4 +256,7 @@ def load_events(client: KlaviyoClient, events: list[dict], limit: int | None = N
             if len(failed) > 25:
                 log.error("Aborting after 25 event failures — investigate before retrying")
                 break
-    return {"events_sent": sent, "events_failed": len(failed), "failures": failed[:10]}
+
+    return {"events_sent": sent, "events_failed": len(failed),
+            "events_quarantined": len(quarantined),
+            "failures": failed[:10], "quarantined": quarantined[:10]}

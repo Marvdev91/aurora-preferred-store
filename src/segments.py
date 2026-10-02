@@ -61,6 +61,9 @@ def definitions() -> list[dict]:
     return [
         {
             # The literal ask from discovery: "In-store VIP event in Berlin".
+            # Requires email consent, deliberately — this is the segment Aurora
+            # would actually send from, and it stays empty until real consent
+            # data is migrated. That's correct behaviour, not a bug.
             "name": "Berlin — In-Store VIPs (high confidence)",
             "why": "Localised in-store event invitations. The use case Sales demoed.",
             "definition": {"condition_groups": [
@@ -68,6 +71,20 @@ def definitions() -> list[dict]:
                 {"conditions": [_property_at_least("preferred_store_confidence", 0.6)]},
                 {"conditions": [_property_at_least("orders_in_store_12m", 2)]},
                 {"conditions": [EMAIL_CONSENT]},
+            ]},
+        },
+        {
+            # DEMO-ONLY: identical logic, minus the consent gate, so the
+            # property-based filtering can be shown working live against real
+            # members. Never the segment you'd actually send from — the name
+            # says so on purpose, and it's not referenced anywhere in the
+            # one-pager's recommended architecture.
+            "name": "DEMO ONLY — Berlin candidates (no consent filter)",
+            "why": "Presentation aid only — proves the property logic returns real members. Not sendable; not part of the recommended architecture.",
+            "definition": {"condition_groups": [
+                {"conditions": [_property_equals("preferred_store_city", "Berlin")]},
+                {"conditions": [_property_at_least("preferred_store_confidence", 0.6)]},
+                {"conditions": [_property_at_least("orders_in_store_12m", 2)]},
             ]},
         },
         {

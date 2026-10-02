@@ -7,7 +7,9 @@ profile properties, events and segments.
 
 Built for the Klaviyo Senior Solution Architect case study. See
 [`ONE_PAGER.md`](ONE_PAGER.md) for the problem framing, assumptions, trade-offs
-and risks.
+and risks, kept deliberately short. See [`APPENDIX.md`](APPENDIX.md) for the
+extended architecture detail, full risk register, and customer-journey
+discussion it links out to.
 
 ---
 

@@ -150,6 +150,84 @@ def test_unrecognised_error_shape_reports_no_change():
     assert changed is False
 
 
+# ----------------------------------------------------------------------
+# Event quarantine: load_events should skip, with no API call, any event
+# whose embedded profile's only identifier is a value load_profiles already
+# learned is permanently invalid — without guessing at anything it wasn't
+# actually told by the API.
+# ----------------------------------------------------------------------
+
+def test_event_quarantine_identifies_known_bad_identity_values():
+    """
+    Mirrors the real sequence: load_profiles drops a phone-only profile
+    because its phone number failed validation, and reports that value.
+    An event belonging to the same identity, with no other identifier,
+    must be quarantined rather than attempted.
+    """
+    from src.load import load_events
+
+    class _FakeClient:
+        dry_run = False
+        def create_event(self, event):
+            raise AssertionError(f"should never attempt a quarantined event: {event['unique_id']}")
+
+    events = [
+        {"unique_id": "mpos:1", "profile": {"phone_number": "+15550100001"}},  # known-bad only id
+    ]
+    quarantine_values = {"+15550100001"}
+
+    result = load_events(_FakeClient(), events, quarantine_values=quarantine_values)
+
+    assert result["events_quarantined"] == 1
+    assert result["events_sent"] == 0
+    assert result["quarantined"][0]["unique_id"] == "mpos:1"
+
+
+def test_event_with_an_extra_identifier_is_not_quarantined():
+    """
+    An event whose profile has a known-bad phone AND a valid email should
+    still be attempted — the bad value alone doesn't disqualify the whole
+    identity, same principle as the profile-level repair logic.
+    """
+    from src.load import load_events
+
+    sent_events = []
+
+    class _FakeClient:
+        dry_run = True  # avoids real sleeps in the loop
+        def create_event(self, event):
+            sent_events.append(event["unique_id"])
+            return {}
+
+    events = [
+        {"unique_id": "mpos:2", "profile": {"phone_number": "+15550100001",
+                                            "email": "real@aurorahomegoods-demo.com"}},
+    ]
+    quarantine_values = {"+15550100001"}
+
+    result = load_events(_FakeClient(), events, quarantine_values=quarantine_values)
+
+    assert result["events_quarantined"] == 0
+    assert result["events_sent"] == 1
+    assert sent_events == ["mpos:2"]
+
+
+def test_no_quarantine_values_behaves_exactly_as_before():
+    """An empty/omitted quarantine set must never skip a legitimate event."""
+    from src.load import load_events
+
+    class _FakeClient:
+        dry_run = True
+        def create_event(self, event):
+            return {}
+
+    events = [{"unique_id": "mpos:3", "profile": {"phone_number": "+15550100009"}}]
+    result = load_events(_FakeClient(), events)  # no quarantine_values passed at all
+
+    assert result["events_quarantined"] == 0
+    assert result["events_sent"] == 1
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
