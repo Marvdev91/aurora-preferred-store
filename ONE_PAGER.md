@@ -199,7 +199,7 @@ responsibility.
 
 *Repo:* `https://github.com/Marvdev91/aurora-preferred-store` (see
 `APPENDIX.md` for extended architecture, risks and the customer-journey
-discussion in full) · *Klaviyo account (public ID):* `YiCPjg` · *Live
+discussion in full) · *Klaviyo Public API Key / account ID:* `YiCPjg` · *Live
 segments:* Berlin VIPs (`RdMdbR`), EMEA Omnichannel (`YpuKdM`), Ops monitoring
 (`TtXCCb`). A fourth, `DEMO ONLY — Berlin candidates` (`XqgmGe`), exists only
 as a presentation aid with no consent filter — not part of the recommended
